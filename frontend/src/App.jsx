@@ -272,10 +272,15 @@ export default function App() {
 
         <header className="topbar">
           <div className="topbar-left">
-            <div className="brand">
-              <img className="brand-logo" src="/CivicLedger_Logo.jpg" alt="CivicLedger logo" />
+            <button
+              type="button"
+              className="brand brand-home"
+              onClick={() => setView("landing")}
+              aria-label="CivicLedger home"
+            >
+              <img className="brand-logo" src="/CivicLedger_Logo.jpg" alt="" />
               <span className="wordmark">CivicLedger</span>
-            </div>
+            </button>
             <span className="portal-badge">Telangana Portal</span>
           </div>
 

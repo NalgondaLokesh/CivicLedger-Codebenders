@@ -272,20 +272,22 @@
   color: var(--landing-accent);
 }
 
-/* Figures: three ruled columns */
+/* Figures: stacked ruled rows on phones, one aligned row from 720px */
 .landing-figures {
   display: grid;
-  grid-template-columns: repeat(3, minmax(0, 1fr));
+  grid-template-columns: minmax(0, 1fr);
   border-top: 1px solid var(--landing-rule);
   border-bottom: 1px solid var(--landing-rule);
 }
 .landing-metric {
   display: grid;
+  justify-items: center;
   gap: 4px;
-  padding: 18px 12px;
+  padding: 16px 0;
+  text-align: center;
 }
 .landing-metric + .landing-metric {
-  border-left: 1px solid var(--landing-rule);
+  border-top: 1px solid var(--landing-rule);
 }
 .landing-metric strong {
   font-family: var(--landing-serif);
@@ -361,8 +363,20 @@
   .landing-persona-title {
     font-size: 24px;
   }
+  .landing-persona-desc {
+    grid-column: 2;
+    grid-row: 2;
+  }
+
+  .landing-figures {
+    grid-template-columns: repeat(3, minmax(0, 1fr));
+  }
   .landing-metric {
     padding: 22px 24px;
+  }
+  .landing-metric + .landing-metric {
+    border-top: 0;
+    border-left: 1px solid var(--landing-rule);
   }
   .landing-metric strong {
     font-size: 34px;

@@ -81,6 +81,8 @@ export default function AuthPanel({ session, onSessionChange, onExplore }) {
   const [displayName, setDisplayName] = useState("");
   const [error, setError] = useState("");
   const [busy, setBusy] = useState(false);
+  const [showPassword, setShowPassword] = useState(false);
+
 
   const switchMode = (next) => {
     setMode(next);
@@ -164,10 +166,10 @@ export default function AuthPanel({ session, onSessionChange, onExplore }) {
           </button>
         </div>
 
-        <form className="auth-form" onSubmit={handleSubmit} noValidate>
+        <form className="auth-form" onSubmit={handleSubmit} noValidate aria-busy={busy}>
           {mode === "signup" && (
             <label className="auth-field">
-              <span>Display name (optional)</span>
+              <span className="auth-field-label">Display name (optional)</span>
               <input
                 type="text"
                 autoComplete="name"
@@ -179,7 +181,7 @@ export default function AuthPanel({ session, onSessionChange, onExplore }) {
             </label>
           )}
           <label className="auth-field">
-            <span>Email</span>
+            <span className="auth-field-label">Email</span>
             <input
               type="email"
               autoComplete="email"
@@ -190,18 +192,33 @@ export default function AuthPanel({ session, onSessionChange, onExplore }) {
               required
             />
           </label>
-          <label className="auth-field">
-            <span>Password</span>
-            <input
-              type="password"
-              autoComplete={mode === "signup" ? "new-password" : "current-password"}
-              maxLength={200}
-              value={password}
-              onChange={(e) => setPassword(e.target.value)}
-              placeholder={mode === "signup" ? "At least 8 characters" : "Your password"}
-              required
-            />
-          </label>
+          <div className="auth-field">
+            <label htmlFor="auth-password" className="auth-field-label">Password</label>
+            <div className="auth-password">
+              <input
+                id="auth-password"
+                type={showPassword ? "text" : "password"}
+                autoComplete={mode === "signup" ? "new-password" : "current-password"}
+                maxLength={200}
+                value={password}
+                onChange={(e) => setPassword(e.target.value)}
+                placeholder={mode === "signup" ? "At least 8 characters" : "Your password"}
+                aria-describedby={mode === "signup" ? "auth-password-hint" : undefined}
+                required
+              />
+              <button
+                type="button"
+                className="auth-reveal"
+                aria-label={showPassword ? "Hide password" : "Show password"}
+                onClick={() => setShowPassword((v) => !v)}
+              >
+                {showPassword ? "Hide" : "Show"}
+              </button>
+            </div>
+            {mode === "signup" && (
+              <span id="auth-password-hint" className="auth-hint">At least 8 characters</span>
+            )}
+          </div>
 
           {error && <p className="auth-error" role="alert">{error}</p>}
 
@@ -211,11 +228,12 @@ export default function AuthPanel({ session, onSessionChange, onExplore }) {
           </p>
 
           <div className="auth-actions">
-            <button type="submit" className="btn-primary" disabled={busy}>
+            <button type="submit" className="btn-primary auth-submit" disabled={busy} aria-busy={busy}>
               {busy ? "Please wait…" : mode === "signup" ? "Create account" : "Sign in"}
             </button>
           </div>
         </form>
+
       </div>
     </section>
   );

@@ -202,6 +202,9 @@ Run these to confirm cloud connectivity end-to-end:
   been done yet.
 - Not yet done: the Scheme Explorer criteria sidebar, the mobile drawer, and
   restyling of the AI and Tracker views.
+  
+## Deploy link
+Link: frontend-kappa-rust-70.vercel.app/
 
 ## Built with
 

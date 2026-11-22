@@ -14,6 +14,9 @@ class Settings(BaseSettings):
         validation_alias=AliasChoices("MONGODB_DB_NAME", "MONGODB_DB"),
     )
     cors_origins: str = "http://localhost:5173,http://127.0.0.1:5173"
+    # Optional regex for origins that can't be listed exactly (e.g. Vercel
+    # preview deploys). Example: https://.*\.vercel\.app
+    cors_origin_regex: str = ""
 
     # Optional cloud services: the app starts without them.
     qdrant_url: str = ""
@@ -29,6 +32,11 @@ class Settings(BaseSettings):
     @property
     def cors_origin_list(self) -> list[str]:
         return [o.strip() for o in self.cors_origins.split(",") if o.strip()]
+
+    @property
+    def cors_origin_regex_value(self) -> str | None:
+        value = self.cors_origin_regex.strip()
+        return value or None
 
 
 @lru_cache

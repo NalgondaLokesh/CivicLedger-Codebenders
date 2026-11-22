@@ -59,10 +59,11 @@
   color: var(--landing-muted);
 }
 
-/* Hero: asymmetric, headline dominant */
+/* Hero: centred, headline dominant */
 .landing-hero {
   display: grid;
   gap: 28px;
+  text-align: center;
 }
 .landing-hero h1 {
   font-family: var(--landing-serif);
@@ -75,12 +76,18 @@
 .landing-hero-aside {
   display: flex;
   flex-direction: column;
+  align-items: center;
   gap: 18px;
+  width: 100%;
+  max-width: 640px;
+  margin: 0 auto;
   padding-top: 20px;
   border-top: 1px solid var(--landing-rule);
+  text-align: center;
 }
 .landing-lead {
-  margin: 0;
+  margin: 0 auto;
+  max-width: 60ch;
   font-size: 17px;
   line-height: 1.6;
   color: var(--landing-ink-soft);
@@ -88,7 +95,9 @@
 .landing-actions {
   display: flex;
   flex-direction: column;
+  justify-content: center;
   gap: 10px;
+  width: 100%;
 }
 .landing-actions button {
   width: 100%;
@@ -133,6 +142,9 @@
   letter-spacing: 0.12em;
   text-transform: uppercase;
   color: var(--landing-accent);
+}
+.landing-steps .landing-label {
+  text-align: center;
 }
 
 /* How it works: numbered sequence on hairlines */
@@ -314,6 +326,7 @@
 @media (min-width: 540px) {
   .landing-actions {
     flex-direction: row;
+    flex-wrap: wrap;
   }
   .landing-actions button {
     width: auto;
@@ -386,24 +399,12 @@
 /* Desktop: asymmetric hero split */
 @media (min-width: 900px) {
   .landing-hero {
-    grid-template-columns: minmax(0, 1.45fr) minmax(0, 1fr);
-    align-items: end;
+    grid-template-columns: minmax(0, 1fr);
+    align-items: center;
     gap: 56px;
   }
   .landing-hero h1 {
     font-size: 78px;
-  }
-  .landing-hero-aside {
-    padding-top: 0;
-    padding-left: 40px;
-    border-top: 0;
-    border-left: 1px solid var(--landing-rule);
-  }
-  .landing-actions {
-    flex-direction: column;
-  }
-  .landing-actions button {
-    width: 100%;
   }
 }
 

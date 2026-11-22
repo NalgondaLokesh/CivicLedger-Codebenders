@@ -1,0 +1,101 @@
+/* CivicLedger — Warm Civic Editorial design system (light mode).
+   Tokens are prefixed --cl- so they do not collide with legacy variables in index.css. */
+
+:root {
+  --cl-canvas: #F4F5F7;
+  --cl-surface: #FFFFFF;
+  --cl-border: #E5E7EB;
+  --cl-primary: #047857;        /* emerald */
+  --cl-primary-deep: #064E3B;   /* hover + text accent */
+  --cl-eligible-bg: #D1FAE5;    /* "Likely Eligible" pill */
+  --cl-eligible-text: #064E3B;
+  --cl-highlight: #D1FAE5;      /* Soft Sage banner */
+  --cl-heading: #1E293B;        /* Warm Slate */
+  --cl-muted: #64748B;          /* slate-500 */
+  --cl-font: system-ui, -apple-system, "Segoe UI", Roboto, "Helvetica Neue", Arial, sans-serif;
+  --cl-radius: 14px;
+  --cl-tap: 44px;
+}
+
+/* ---------- Focus ---------- */
+:focus-visible {
+  outline: 3px solid var(--cl-primary);
+  outline-offset: 2px;
+}
+
+/* ---------- Typography ---------- */
+.eyebrow {
+  margin: 0;
+  font-size: 12px;
+  font-weight: 700;
+  letter-spacing: 0.12em;
+  text-transform: uppercase;
+  color: var(--cl-primary);
+}
+
+/* ---------- Surfaces ---------- */
+.card {
+  background: var(--cl-surface);
+  border: 1px solid var(--cl-border);
+  border-radius: var(--cl-radius);
+  padding: 16px;
+}
+
+/* ---------- Pills ---------- */
+.pill {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  padding: 4px 10px;
+  border-radius: 999px;
+  font-size: 12px;
+  font-weight: 700;
+  background: var(--cl-eligible-bg);
+  color: var(--cl-eligible-text);
+  white-space: nowrap;
+}
+
+/* ---------- Buttons ---------- */
+.btn-primary,
+.btn-secondary {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  gap: 8px;
+  min-height: var(--cl-tap);
+  padding: 10px 18px;
+  border-radius: 10px;
+  font: inherit;
+  font-size: 15px;
+  font-weight: 600;
+  line-height: 1.2;
+  text-align: center;
+  cursor: pointer;
+  transition: background-color 0.15s ease, border-color 0.15s ease, color 0.15s ease;
+}
+
+.btn-primary {
+  background: var(--cl-primary);
+  border: 1px solid var(--cl-primary);
+  color: #FFFFFF;
+}
+.btn-primary:hover {
+  background: var(--cl-primary-deep);
+  border-color: var(--cl-primary-deep);
+}
+
+.btn-secondary {
+  background: var(--cl-surface);
+  border: 1px solid var(--cl-border);
+  color: var(--cl-heading);
+}
+.btn-secondary:hover {
+  border-color: var(--cl-primary);
+  color: var(--cl-primary-deep);
+}
+
+.btn-primary:disabled,
+.btn-secondary:disabled {
+  opacity: 0.6;
+  cursor: not-allowed;
+}

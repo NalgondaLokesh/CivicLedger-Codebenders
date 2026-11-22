@@ -19,14 +19,6 @@ const SAMPLE_STORIES = [
     label: "Minority, study abroad",
     text: "I'm planning to study abroad for a master's, from a minority community family in Karimnagar, income under 6 lakh.",
   },
-  {
-    label: "Small farmer",
-    text: "I own 2 acres of cultivable land in Karimnagar, aged 42, looking for crop investment support and insurance.",
-  },
-  {
-    label: "Woman entrepreneur",
-    text: "I am part of a SERP-registered SHG in Warangal looking to set up a food processing unit with micro-credit support.",
-  },
 ];
 
 const PERSONA_OPTIONS = [
@@ -103,25 +95,33 @@ function MatchCard({ match }) {
   }
 
   return (
-    <article className="match-card">
+    <article className={`match-card mc-${status}`}>
       <div className="match-head">
         <h3>{match.name}</h3>
-        <span className={`match-badge ${BADGE_CLASS[status] || ""}`}>
+        <span className={`pill match-badge ${BADGE_CLASS[status] || ""}`}>
           {BADGE_TEXT[status] || status}
         </span>
       </div>
 
-      {match.amount_or_benefit && <p className="match-benefit">💰 {match.amount_or_benefit}</p>}
+      {match.amount_or_benefit && (
+        <p className="match-benefit">
+          <span className="match-label">Benefit</span>
+          {match.amount_or_benefit}
+        </p>
+      )}
 
       {rules.length > 0 && (
-        <ul className="rule-list">
-          {rules.map((r, i) => (
-            <li key={i}>
-              <strong>{r.label}</strong>
-              {r.reason && <span> — {r.reason}</span>}
-            </li>
-          ))}
-        </ul>
+        <>
+          <h4>Why it matched</h4>
+          <ul className="rule-list">
+            {rules.map((r, i) => (
+              <li key={i}>
+                <strong>{r.label}</strong>
+                {r.reason && <span> — {r.reason}</span>}
+              </li>
+            ))}
+          </ul>
+        </>
       )}
 
       {docs.length > 0 && (
@@ -209,10 +209,14 @@ export default function EligibilityChat() {
   const [profile, setProfile] = useState(() => saved?.profile ?? {});
   const [turnCount, setTurnCount] = useState(() => saved?.turnCount ?? 0);
   const [latest, setLatest] = useState(() => saved?.latest ?? null);
+  // Last eligibility evaluation (non-Q&A response). Kept separate from
+  // `latest` so matches survive follow-up questions.
+  const [evalData, setEvalData] = useState(() => saved?.evalData ?? null);
   const [forceResults, setForceResults] = useState(() => saved?.forceResults ?? false);
   const [personaChoice, setPersonaChoice] = useState("");
   const [historyLoaded, setHistoryLoaded] = useState(false);
-  const threadEndRef = useRef(null);
+  const threadRef = useRef(null);
+  const inputRef = useRef(null);
 
   // Server-side history (per account) wins over the per-tab cache.
   useEffect(() => {
@@ -238,6 +242,7 @@ export default function EligibilityChat() {
     setProfile({});
     setTurnCount(0);
     setLatest(null);
+    setEvalData(null);
     setForceResults(false);
     try { sessionStorage.removeItem(CHAT_STORAGE_KEY); } catch {}
     clearChatHistory().catch(() => {});
@@ -247,32 +252,44 @@ export default function EligibilityChat() {
     try {
       sessionStorage.setItem(
         CHAT_STORAGE_KEY,
-        JSON.stringify({ messages, profile, turnCount, latest, forceResults })
+        JSON.stringify({ messages, profile, turnCount, latest, evalData, forceResults })
       );
     } catch {
       // storage full/unavailable — chat still works in-memory
     }
-  }, [messages, profile, turnCount, latest, forceResults]);
+  }, [messages, profile, turnCount, latest, evalData, forceResults]);
 
+  // Keep the newest message in view. Scroll only the thread (not the page),
+  // and skip the animation when the user prefers reduced motion.
   useEffect(() => {
-    threadEndRef.current?.scrollIntoView({ behavior: "smooth", block: "end" });
-  }, [messages]);
+    const thread = threadRef.current;
+    if (!thread) return;
+    const reduce = window.matchMedia?.("(prefers-reduced-motion: reduce)")?.matches;
+    thread.scrollTo({ top: thread.scrollHeight, behavior: reduce ? "auto" : "smooth" });
+  }, [messages, loading]);
 
-  const traits = latest?.extracted_traits || {};
+  // Chips reflect the accumulated profile, not just the latest extraction —
+  // they persist across Q&A turns and page refreshes.
+  const traits = profile;
   const traitEntries = Object.keys(TRAIT_LABELS)
     .filter((key) => traits[key] !== null && traits[key] !== undefined && traits[key] !== "")
     .map((key) => [key, traits[key]]);
 
+  // The last eligibility evaluation drives the matches panel; Q&A answers
+  // don't wipe it.
+  const ev = evalData || (latest && !latest.is_answer ? latest : null);
   const showResults =
-    !latest?.is_answer &&
+    ev !== null &&
     (forceResults ||
-      (latest !== null &&
-        (latest.needs_more_info === false ||
-          (latest.max_turns != null && latest.turn_count >= latest.max_turns))));
+      ev.needs_more_info === false ||
+      (ev.max_turns != null && ev.turn_count >= ev.max_turns));
 
   const qaSources = latest?.is_answer && Array.isArray(latest?.context_snippets)
     ? [...new Set(latest.context_snippets.map((s) => s.name).filter(Boolean))]
     : [];
+
+  // First run: only the welcome message is in the thread.
+  const isFirstRun = messages.length <= 1;
 
   async function send(text, { fromInput = false, showMatches = false } = {}) {
     const content = text.trim();
@@ -284,7 +301,10 @@ export default function EligibilityChat() {
       .slice(-16)
       .map(({ role, content: c }) => ({ role, content: String(c).slice(0, 3900) }));
     setMessages((m) => [...m, { role: "user", content }]);
-    if (fromInput) setInput("");
+    if (fromInput) {
+      setInput("");
+      if (inputRef.current) inputRef.current.style.height = "auto";
+    }
     setLoading(true);
 
     try {
@@ -312,6 +332,7 @@ export default function EligibilityChat() {
 
       if (data.profile) setProfile(data.profile);
       if (typeof data.turn_count === "number") setTurnCount(data.turn_count);
+      if (!data.is_answer) setEvalData(data);
       setLatest(data);
       if (showMatches) setForceResults(true);
     } catch (e) {
@@ -319,7 +340,8 @@ export default function EligibilityChat() {
         ...m,
         {
           role: "assistant",
-          content: `Sorry, I couldn't check that just now (${e.message}). Your message is still in the box, so you can try again.`,
+          error: true,
+          content: `Sorry, I couldn't check that just now (${e.message}). Please try again.`,
         },
       ]);
       if (fromInput) setInput(content);
@@ -333,14 +355,41 @@ export default function EligibilityChat() {
     send(input, { fromInput: true });
   }
 
+  // Enter sends; Shift+Enter inserts a new line; IME composition is left alone.
+  function handleKeyDown(e) {
+    if (e.key === "Enter" && !e.shiftKey && !e.nativeEvent.isComposing) {
+      handleSubmit(e);
+    }
+  }
+
+  function fillStarter(text) {
+    setInput(text);
+    inputRef.current?.focus();
+  }
+
+  // Grow the composer with content, capped by CSS max-height.
+  function autoGrow(e) {
+    const el = e.target;
+    el.style.height = "auto";
+    el.style.height = `${Math.min(el.scrollHeight, 160)}px`;
+  }
+
   return (
     <section id="ai" className="chat-panel">
       <div className="chat-container">
-        <h2>AI Eligibility Check</h2>
-        <p className="chat-intro">
-          Tell us about your situation — students, farmers and women entrepreneurs
-          are all supported. Results are indicative only.
-        </p>
+        <div className="chat-head">
+          <div>
+            <h2>AI Eligibility Check</h2>
+            <p className="chat-intro">
+              Tell us about your situation — students, farmers and women
+              entrepreneurs are all supported.
+            </p>
+          </div>
+          <span className="chat-live" aria-label="Status: indicative results only">
+            <span className="chat-live-dot" aria-hidden="true" />
+            Indicative only
+          </span>
+        </div>
         <div className="persona-picker">
           <label htmlFor="chat-persona">I am a</label>
           <select
@@ -358,33 +407,62 @@ export default function EligibilityChat() {
 
         {latest?.pii_warning && (
           <div className="pii-warning" role="alert">
-            ⚠️ Sensitive ID numbers were removed from your message and were not stored.
+            Sensitive ID numbers were removed from your message and were not stored.
           </div>
         )}
 
-        <div className="sample-row">
-          <span className="sample-label">Try a sample story:</span>
-          {SAMPLE_STORIES.map((s) => (
-            <button
-              key={s.label}
-              type="button"
-              className="sample-btn"
-              onClick={() => send(s.text)}
-              disabled={loading}
-            >
-              {s.label}
-            </button>
-          ))}
-        </div>
+        {isFirstRun && (
+          <div className="starter-block">
+            <p className="sample-label">Try a sample story:</p>
+            <div className="sample-row">
+              {SAMPLE_STORIES.map((s) => (
+                <button
+                  key={s.label}
+                  type="button"
+                  className="sample-btn"
+                  onClick={() => fillStarter(s.text)}
+                  disabled={loading}
+                >
+                  {s.label}
+                </button>
+              ))}
+            </div>
+          </div>
+        )}
 
-        <div className="chat-thread" aria-live="polite">
+        <div
+          className="chat-thread"
+          role="log"
+          aria-live="polite"
+          aria-relevant="additions"
+          aria-label="Conversation"
+          ref={threadRef}
+          tabIndex={0}
+        >
           {messages.map((m, i) => (
-            <div key={i} className={`bubble ${m.role === "user" ? "bubble-user" : "bubble-assistant"}`}>
-              {m.role === "assistant" ? <Markdown text={m.content} /> : m.content}
+            <div key={i} className={`msg ${m.role === "user" ? "msg-user" : "msg-assistant"}`}>
+              <span className="msg-who">{m.role === "user" ? "You" : "CivicLedger"}</span>
+              <div
+                className={`bubble ${m.role === "user" ? "bubble-user" : "bubble-assistant"}${m.error ? " bubble-error" : ""}`}
+                role={m.error ? "alert" : undefined}
+              >
+                {m.role === "assistant" ? <Markdown text={m.content} /> : m.content}
+              </div>
             </div>
           ))}
-          {loading && <div className="bubble bubble-assistant bubble-typing">Thinking…</div>}
-          <div ref={threadEndRef} />
+          {loading && (
+            <div className="msg msg-assistant" role="status">
+              <span className="msg-who">CivicLedger</span>
+              <div className="bubble bubble-assistant bubble-typing">
+                <span className="chat-sr-only">Checking your details…</span>
+                <span className="typing-dots" aria-hidden="true">
+                  <span />
+                  <span />
+                  <span />
+                </span>
+              </div>
+            </div>
+          )}
         </div>
 
         {traitEntries.length > 0 && (
@@ -404,19 +482,23 @@ export default function EligibilityChat() {
         )}
 
         <form className="chat-form" onSubmit={handleSubmit}>
-          <input
-            type="text"
+          <label htmlFor="chat-message" className="chat-sr-only">Your message</label>
+          <textarea
+            id="chat-message"
+            ref={inputRef}
             className="chat-input"
             value={input}
-            onChange={(e) => setInput(e.target.value)}
+            onChange={(e) => { setInput(e.target.value); autoGrow(e); }}
+            onKeyDown={handleKeyDown}
             placeholder="Describe your situation…"
-            aria-label="Your message"
+            rows={2}
             disabled={loading}
           />
           <button type="submit" className="send-btn" disabled={loading || !input.trim()}>
-            Send
+            {loading ? "Checking…" : "Send"}
           </button>
         </form>
+        <p className="chat-hint">Enter sends. Shift + Enter starts a new line.</p>
 
         <button
           type="button"
@@ -435,9 +517,14 @@ export default function EligibilityChat() {
 
         {showResults && (
           <div className="results">
-            <h3>Your best matches</h3>
-            {Array.isArray(latest?.matches) && latest.matches.length > 0 ? (
-              latest.matches.map((m, i) => <MatchCard key={m.slug || m.name || i} match={m} />)
+            <h3>
+              Your best matches
+              {Array.isArray(ev?.matches) && ev.matches.length > 0 && (
+                <span className="results-count">{ev.matches.length}</span>
+              )}
+            </h3>
+            {Array.isArray(ev?.matches) && ev.matches.length > 0 ? (
+              ev.matches.map((m, i) => <MatchCard key={m.slug || m.name || i} match={m} />)
             ) : (
               <p className="status">No matches yet. Try adding more details about your situation.</p>
             )}

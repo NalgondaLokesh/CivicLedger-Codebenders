@@ -19,7 +19,7 @@ from pydantic import BaseModel, Field
 from .auth import require_user, resolve_user_id
 from .config import get_settings
 from .db import get_db
-from .groq_client import get_groq_client
+from .llm import get_chat_model, groq_chat
 from .retrieval import retrieve_snippets
 
 logger = logging.getLogger(__name__)
@@ -220,19 +220,11 @@ def _keyword_extract(text: str) -> dict[str, Any]:
     return found
 
 
-async def _groq_extract(client: Any, messages: list[dict[str, str]]) -> dict[str, Any]:
-    create = client.chat.completions.create
-    kwargs = {
-        "model": get_settings().groq_model,
-        "messages": messages,
-        "response_format": {"type": "json_object"},
-        "temperature": 0,
-    }
-    if inspect.iscoroutinefunction(create):
-        resp = await create(**kwargs)
-    else:
-        resp = await asyncio.to_thread(create, **kwargs)
-    content = resp.choices[0].message.content or "{}"
+async def _groq_extract(messages: list[dict[str, str]]) -> dict[str, Any]:
+    """Profile extraction via LangChain ChatGroq (JSON mode)."""
+    content = await groq_chat(messages, temperature=0, json_mode=True)
+    if not content:
+        raise RuntimeError("LLM extraction unavailable")
     data = json.loads(content)
     if not isinstance(data, dict):
         raise ValueError("unexpected extraction output")
@@ -614,6 +606,78 @@ def _looks_like_question(text: str) -> bool:
     return t.endswith("?") or bool(QUESTION_RE.match(t))
 
 
+# Pure greetings / meta questions — the whole message must match so that
+# "hi, I'm a BC student…" still goes through eligibility extraction.
+CHITCHAT_RE = re.compile(
+    r"^\s*(hi+|hii+|hello+|hey+|yo|namaste|good\s+(morning|afternoon|evening|day)|"
+    r"whats?\s*up|how\s+are\s+you|how'?s\s+it\s+going|thank(s|\s+you)(\s+so\s+much)?|"
+    r"bye+|goodbye|see\s+you|what\s+is\s+(this|civicledger)|"
+    r"what'?s\s+(this|the\s+site|the\s+app|civicledger)|"
+    r"whats\s+(this|the\s+site|the\s+app)|who\s+are\s+you|what\s+can\s+you\s+do|"
+    r"how\s+does\s+(this|it|civicledger)\s+work|help|"
+    # greeting followed by a meta question: "hello, what is this site?"
+    r"(?:hi|hello|hey|yo|namaste|good\s+(?:morning|afternoon|evening|day))[\s,.!]+"
+    r"(?:what\s+is\s+(?:this|civicledger)|what'?s\s+(?:this|the\s+site|the\s+app|civicledger)|"
+    r"whats\s+(?:this|the\s+site|the\s+app)|who\s+are\s+you|what\s+can\s+you\s+do|"
+    r"how\s+does\s+(?:this|it|civicledger)\s+work|help))[\s!.?,]*$",
+    re.IGNORECASE,
+)
+
+# Looser combo: a greeting followed anywhere by a meta question in a short
+# message ("hello, what is this site about?"). Eligibility details in the
+# same breath still go through extraction — there's no meta keyword then.
+GREETING_PREFIX_RE = re.compile(
+    r"^\s*(hi|hello|hey|yo|namaste|good\s+(morning|afternoon|evening|day))\b",
+    re.IGNORECASE,
+)
+META_QUESTION_RE = re.compile(
+    r"(what\s+is|what'?s|whats|who\s+are\s+you|what\s+can\s+you\s+do|"
+    r"how\s+does\s+(this|it|civicledger)\s+work|about\s+(this|the\s+site|civicledger)|help)\b",
+    re.IGNORECASE,
+)
+
+
+def _is_chitchat(text: str) -> bool:
+    if CHITCHAT_RE.match(text):
+        return True
+    return (
+        len(text) <= 120
+        and bool(GREETING_PREFIX_RE.match(text))
+        and bool(META_QUESTION_RE.search(text))
+    )
+
+CONVO_SYSTEM_PROMPT = (
+    "You are CivicLedger, a friendly assistant that helps Telangana residents "
+    "discover central and state government schemes for students, small farmers, "
+    "and women entrepreneurs. Answer greetings and questions about what "
+    "CivicLedger does in 1-3 short, warm sentences. Then invite the user to "
+    "share their situation — education level, social category, family income, "
+    "and state — for an indicative eligibility check. Eligibility results are "
+    "indicative only, never guaranteed; suggest confirming on the official "
+    "portal. Never ask for, repeat, or store Aadhaar, PAN, passbook, or "
+    "account numbers."
+)
+
+CONVO_FALLBACK = (
+    "Hi! I'm CivicLedger — I help Telangana students, farmers, and women "
+    "entrepreneurs find government schemes they may qualify for. Tell me about "
+    "your education, category, income and state, and I'll check which schemes "
+    "you are likely eligible for (indicative only)."
+)
+
+
+async def _converse(message: str, history: list[dict[str, str]]) -> str:
+    """Conversational reply for greetings/meta questions via ChatGroq."""
+    messages = [{"role": "system", "content": CONVO_SYSTEM_PROMPT}]
+    messages.extend(history[-4:])
+    messages.append({"role": "user", "content": message})
+    text = await groq_chat(messages, temperature=0.7)
+    if text:
+        return text
+    logger.warning("ChatGroq chit-chat unavailable; using fallback")
+    return CONVO_FALLBACK
+
+
 def _qa_retrieval_query(question: str, history: list[dict[str, str]]) -> str:
     """Build a retrieval query that carries conversation context.
 
@@ -667,7 +731,6 @@ async def _retrieve_qa_context(
 
 
 async def _answer_question(
-    client: Any,
     question: str,
     snippets: list[dict[str, Any]],
     history: list[dict[str, str]],
@@ -679,27 +742,14 @@ async def _answer_question(
         context_parts.append(f"- {label} [{s.get('chunk_type','')}]: {s.get('text','')}")
     context = "\n".join(context_parts) or "(no scheme context available)"
 
-    if client is not None:
-        messages = [{"role": "system", "content": QA_SYSTEM_PROMPT}]
-        messages.append({"role": "system", "content": f"Scheme context:\n{context}"})
-        messages.extend(history[-4:])
-        messages.append({"role": "user", "content": question})
-        try:
-            create = client.chat.completions.create
-            kwargs = {
-                "model": get_settings().groq_model,
-                "messages": messages,
-                "temperature": 0.3,
-            }
-            if inspect.iscoroutinefunction(create):
-                resp = await create(**kwargs)
-            else:
-                resp = await asyncio.to_thread(create, **kwargs)
-            text = (resp.choices[0].message.content or "").strip()
-            if text:
-                return text, "groq"
-        except Exception as exc:
-            logger.warning("Groq Q&A failed (%s); using fallback", type(exc).__name__)
+    messages = [{"role": "system", "content": QA_SYSTEM_PROMPT}]
+    messages.append({"role": "system", "content": f"Scheme context:\n{context}"})
+    messages.extend(history[-4:])
+    messages.append({"role": "user", "content": question})
+    text = await groq_chat(messages, temperature=0.3)
+    if text:
+        return text, "groq"
+    logger.warning("ChatGroq Q&A unavailable; using fallback")
 
     # Fallback: summarize retrieved chunks directly.
     if snippets:
@@ -734,13 +784,20 @@ async def eligibility_chat(
         pii_warning = pii_warning or found
         masked_history.append({"role": item.role, "content": masked_content})
 
-    # 1b. Q&A mode: questions are answered from retrieved scheme context,
-    # without touching the eligibility extraction/matching flow.
-    if not req.show_matches_now and _looks_like_question(masked_message):
+    # 1b. Conversational & Q&A modes: greetings/meta questions get a friendly
+    # reply; questions are answered from retrieved scheme context — neither
+    # touches the eligibility extraction/matching flow.
+    is_chitchat = _is_chitchat(masked_message)
+    if not req.show_matches_now and (is_chitchat or _looks_like_question(masked_message)):
         profile = _sanitize(req.profile)
-        snippets = await _retrieve_qa_context(masked_message, profile, masked_history)
-        client = get_groq_client()
-        reply, qa_mode = await _answer_question(client, masked_message, snippets, masked_history)
+        if is_chitchat:
+            snippets = []
+            reply = await _converse(masked_message, masked_history)
+            mode = "chitchat"
+        else:
+            snippets = await _retrieve_qa_context(masked_message, profile, masked_history)
+            reply, qmode = await _answer_question(masked_message, snippets, masked_history)
+            mode = f"qa_{qmode}"
 
         uid = await resolve_user_id(authorization)
         if uid is not None:
@@ -759,23 +816,22 @@ async def eligibility_chat(
             "profile": profile,
             "matches": [],
             "context_snippets": snippets,
-            "extraction_mode": f"qa_{qa_mode}",
+            "extraction_mode": mode,
             "disclaimer": DISCLAIMER,
         }
 
-    # 2. Extraction: Groq when configured, keyword fallback otherwise.
+    # 2. Extraction: ChatGroq (JSON mode) when configured, keyword fallback otherwise.
     extraction_mode = "keyword"
     extracted: dict[str, Any] | None = None
-    client = get_groq_client()
-    if client is not None:
+    if get_chat_model() is not None:
         messages = [{"role": "system", "content": GROQ_SYSTEM_PROMPT}]
         messages.extend(masked_history[-6:])
         messages.append({"role": "user", "content": masked_message})
         try:
-            extracted = _sanitize(await _groq_extract(client, messages))
+            extracted = _sanitize(await _groq_extract(messages))
             extraction_mode = "groq"
         except Exception as exc:
-            logger.warning("Groq extraction unavailable (%s); using keyword fallback", type(exc).__name__)
+            logger.warning("LLM extraction unavailable (%s); using keyword fallback", type(exc).__name__)
             extracted = None
     if extracted is None:
         extracted = _sanitize(_keyword_extract(masked_message))

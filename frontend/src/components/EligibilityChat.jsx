@@ -209,10 +209,6 @@ export default function EligibilityChat() {
   const [profile, setProfile] = useState(() => saved?.profile ?? {});
   const [turnCount, setTurnCount] = useState(() => saved?.turnCount ?? 0);
   const [latest, setLatest] = useState(() => saved?.latest ?? null);
-  // Last eligibility evaluation (non-Q&A response). Kept separate from
-  // `latest` so matches survive follow-up questions.
-  const [evalData, setEvalData] = useState(() => saved?.evalData ?? null);
-  const [forceResults, setForceResults] = useState(() => saved?.forceResults ?? false);
   const [personaChoice, setPersonaChoice] = useState("");
   const [historyLoaded, setHistoryLoaded] = useState(false);
   const threadRef = useRef(null);
@@ -242,8 +238,6 @@ export default function EligibilityChat() {
     setProfile({});
     setTurnCount(0);
     setLatest(null);
-    setEvalData(null);
-    setForceResults(false);
     try { sessionStorage.removeItem(CHAT_STORAGE_KEY); } catch {}
     clearChatHistory().catch(() => {});
   }
@@ -252,12 +246,12 @@ export default function EligibilityChat() {
     try {
       sessionStorage.setItem(
         CHAT_STORAGE_KEY,
-        JSON.stringify({ messages, profile, turnCount, latest, evalData, forceResults })
+        JSON.stringify({ messages, profile, turnCount, latest })
       );
     } catch {
       // storage full/unavailable — chat still works in-memory
     }
-  }, [messages, profile, turnCount, latest, evalData, forceResults]);
+  }, [messages, profile, turnCount, latest]);
 
   // Keep the newest message in view. Scroll only the thread (not the page),
   // and skip the animation when the user prefers reduced motion.
@@ -275,15 +269,6 @@ export default function EligibilityChat() {
     .filter((key) => traits[key] !== null && traits[key] !== undefined && traits[key] !== "")
     .map((key) => [key, traits[key]]);
 
-  // The last eligibility evaluation drives the matches panel; Q&A answers
-  // don't wipe it.
-  const ev = evalData || (latest && !latest.is_answer ? latest : null);
-  const showResults =
-    ev !== null &&
-    (forceResults ||
-      ev.needs_more_info === false ||
-      (ev.max_turns != null && ev.turn_count >= ev.max_turns));
-
   const qaSources = latest?.is_answer && Array.isArray(latest?.context_snippets)
     ? [...new Set(latest.context_snippets.map((s) => s.name).filter(Boolean))]
     : [];
@@ -297,7 +282,9 @@ export default function EligibilityChat() {
 
     // Send only a recent tail — the backend caps history length/content, and
     // older turns are already reflected in `profile` anyway.
+    // Matches cards are UI-only — never sent back as chat history.
     const history = messages
+      .filter((m) => m.kind !== "matches")
       .slice(-16)
       .map(({ role, content: c }) => ({ role, content: String(c).slice(0, 3900) }));
     setMessages((m) => [...m, { role: "user", content }]);
@@ -328,13 +315,29 @@ export default function EligibilityChat() {
         (data.is_answer
           ? "I couldn't answer that just now."
           : "Thanks, got it.");
-      setMessages((m) => [...m, { role: "assistant", content: reply }]);
+      // Scheme matches render inline in the thread as a special assistant
+      // message, right after the reply — not in a separate panel. Only append
+      // them when the profile actually changed (or the user asked), so filler
+      // messages like "hi" don't re-dump the same cards.
+      const stable = (o) =>
+        JSON.stringify(Object.keys(o || {}).sort().map((k) => [k, o[k]]));
+      const profileChanged = stable(data.profile) !== stable(effectiveProfile);
+      const wantsMatches =
+        !data.is_answer &&
+        Array.isArray(data.matches) &&
+        (showMatches ||
+          (data.needs_more_info === false && profileChanged));
+      setMessages((m) => [
+        ...m,
+        { role: "assistant", content: reply },
+        ...(wantsMatches
+          ? [{ role: "assistant", kind: "matches", matches: data.matches || [] }]
+          : []),
+      ]);
 
       if (data.profile) setProfile(data.profile);
       if (typeof data.turn_count === "number") setTurnCount(data.turn_count);
-      if (!data.is_answer) setEvalData(data);
       setLatest(data);
-      if (showMatches) setForceResults(true);
     } catch (e) {
       setMessages((m) => [
         ...m,
@@ -439,17 +442,38 @@ export default function EligibilityChat() {
           ref={threadRef}
           tabIndex={0}
         >
-          {messages.map((m, i) => (
-            <div key={i} className={`msg ${m.role === "user" ? "msg-user" : "msg-assistant"}`}>
-              <span className="msg-who">{m.role === "user" ? "You" : "CivicLedger"}</span>
-              <div
-                className={`bubble ${m.role === "user" ? "bubble-user" : "bubble-assistant"}${m.error ? " bubble-error" : ""}`}
-                role={m.error ? "alert" : undefined}
-              >
-                {m.role === "assistant" ? <Markdown text={m.content} /> : m.content}
+          {messages.map((m, i) =>
+            m.kind === "matches" ? (
+              <div key={i} className="msg msg-assistant msg-matches">
+                <span className="msg-who">CivicLedger</span>
+                <div className="matches-stack">
+                  <div className="matches-stack-head">
+                    <h3>Your best matches</h3>
+                    {m.matches.length > 0 && (
+                      <span className="results-count">{m.matches.length}</span>
+                    )}
+                  </div>
+                  {m.matches.length > 0 ? (
+                    m.matches.map((match, j) => (
+                      <MatchCard key={match.slug || match.name || j} match={match} />
+                    ))
+                  ) : (
+                    <p className="status">No matches yet. Try adding more details about your situation.</p>
+                  )}
+                </div>
               </div>
-            </div>
-          ))}
+            ) : (
+              <div key={i} className={`msg ${m.role === "user" ? "msg-user" : "msg-assistant"}`}>
+                <span className="msg-who">{m.role === "user" ? "You" : "CivicLedger"}</span>
+                <div
+                  className={`bubble ${m.role === "user" ? "bubble-user" : "bubble-assistant"}${m.error ? " bubble-error" : ""}`}
+                  role={m.error ? "alert" : undefined}
+                >
+                  {m.role === "assistant" ? <Markdown text={m.content} /> : m.content}
+                </div>
+              </div>
+            )
+          )}
           {loading && (
             <div className="msg msg-assistant" role="status">
               <span className="msg-who">CivicLedger</span>
@@ -494,8 +518,14 @@ export default function EligibilityChat() {
             rows={2}
             disabled={loading}
           />
-          <button type="submit" className="send-btn" disabled={loading || !input.trim()}>
-            {loading ? "Checking…" : "Send"}
+          <button
+            type="submit"
+            className="send-btn"
+            disabled={loading || !input.trim()}
+            aria-label={loading ? "Checking…" : "Send message"}
+            title={loading ? "Checking…" : "Send"}
+          >
+            {loading ? "…" : "↑"}
           </button>
         </form>
         <p className="chat-hint">Enter sends. Shift + Enter starts a new line.</p>
@@ -513,22 +543,6 @@ export default function EligibilityChat() {
           <button type="button" className="clear-chat-btn" onClick={resetChat}>
             Clear conversation
           </button>
-        )}
-
-        {showResults && (
-          <div className="results">
-            <h3>
-              Your best matches
-              {Array.isArray(ev?.matches) && ev.matches.length > 0 && (
-                <span className="results-count">{ev.matches.length}</span>
-              )}
-            </h3>
-            {Array.isArray(ev?.matches) && ev.matches.length > 0 ? (
-              ev.matches.map((m, i) => <MatchCard key={m.slug || m.name || i} match={m} />)
-            ) : (
-              <p className="status">No matches yet. Try adding more details about your situation.</p>
-            )}
-          </div>
         )}
       </div>
     </section>

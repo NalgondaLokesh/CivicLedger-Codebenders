@@ -91,8 +91,74 @@ def _build_filter(filters: dict):
     return models.Filter(must=must) if must else None
 
 
-def retrieve_snippets(query: str, filters: dict | None = None, limit: int = 5) -> list[dict]:
-    """Return the top matching scheme chunks for query. Returns [] when Qdrant is unavailable."""
+_vector_store = None
+_vector_store_failed = False
+
+
+def _get_vector_store():
+    """Lazily build a LangChain QdrantVectorStore over the scheme collection.
+
+    Uses FastEmbedEmbeddings (same BAAI/bge-small-en-v1.5 model as embed_text)
+    so query vectors are compatible with the indexed points. Returns None when
+    langchain-qdrant / langchain-community or Qdrant is unavailable.
+    """
+    global _vector_store, _vector_store_failed
+    if _vector_store is not None or _vector_store_failed:
+        return _vector_store
+    settings = get_settings()
+    if get_qdrant_client() is None:
+        _vector_store_failed = True
+        return None
+    try:
+        from langchain_community.embeddings import FastEmbedEmbeddings
+        from langchain_qdrant import QdrantVectorStore
+
+        embeddings = FastEmbedEmbeddings(model_name=EMBED_MODEL)
+        _vector_store = QdrantVectorStore.from_existing_collection(
+            collection_name=settings.qdrant_collection,
+            embedding=embeddings,
+            url=settings.qdrant_url,
+            api_key=settings.qdrant_api_key or None,
+            content_payload_key="page_content",
+        )
+    except Exception as exc:
+        logger.warning(
+            "LangChain vector store unavailable (%s); using direct Qdrant path",
+            type(exc).__name__,
+        )
+        _vector_store_failed = True
+    return _vector_store
+
+
+def _retrieve_snippets_lc(query: str, filters: dict | None, limit: int) -> list[dict] | None:
+    """LangChain retriever path. Returns None when the store is unavailable."""
+    store = _get_vector_store()
+    if store is None:
+        return None
+    docs = store.similarity_search_with_score(
+        query,
+        k=limit,
+        filter=_build_filter(filters or {}),
+    )
+    snippets = []
+    for doc, score in docs:
+        meta = doc.metadata or {}
+        snippets.append(
+            {
+                "slug": meta.get("slug"),
+                "name": meta.get("name"),
+                "chunk_type": meta.get("chunk_type"),
+                "text": doc.page_content,
+                "score": score,
+                "official_url": meta.get("official_url"),
+                "last_verified_date": meta.get("last_verified_date"),
+            }
+        )
+    return snippets
+
+
+def _retrieve_snippets_direct(query: str, filters: dict | None, limit: int) -> list[dict]:
+    """Direct qdrant-client search (fallback / pre-LangChain payload shape)."""
     client = get_qdrant_client()
     if client is None:
         return []
@@ -124,3 +190,18 @@ def retrieve_snippets(query: str, filters: dict | None = None, limit: int = 5) -
     except Exception as exc:
         logger.warning("Qdrant retrieval failed: %s", exc)
         return []
+
+
+def retrieve_snippets(query: str, filters: dict | None = None, limit: int = 5) -> list[dict]:
+    """Return the top matching scheme chunks for query. Returns [] when Qdrant is unavailable.
+
+    Primary path is the LangChain QdrantVectorStore retriever; falls back to a
+    direct qdrant-client query on any failure.
+    """
+    try:
+        snippets = _retrieve_snippets_lc(query, filters, limit)
+        if snippets is not None:
+            return snippets
+    except Exception as exc:
+        logger.warning("LangChain retrieval failed (%s); falling back", type(exc).__name__)
+    return _retrieve_snippets_direct(query, filters, limit)

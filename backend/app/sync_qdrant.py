@@ -106,6 +106,22 @@ def _base_payload(scheme: dict, slug: str) -> dict:
     }
 
 
+def _chunk_payload(scheme: dict, slug: str, chunk: dict) -> dict:
+    """Payload compatible with both the direct Qdrant filter path and
+    LangChain's QdrantVectorStore (page_content + metadata keys)."""
+    flat = {
+        **_base_payload(scheme, slug),
+        "chunk_type": chunk["chunk_type"],
+        "text": chunk["text"],
+    }
+    metadata = {k: v for k, v in flat.items() if k != "text"}
+    return {
+        **flat,
+        "page_content": chunk["text"],
+        "metadata": metadata,
+    }
+
+
 def _delete_slug_points(client, collection: str, slug: str) -> int:
     """Delete all points for a slug (paginated scroll + delete by id)."""
     from qdrant_client.models import FieldCondition, Filter, MatchValue
@@ -188,11 +204,7 @@ def sync_scheme_to_qdrant(scheme: dict) -> dict:
                 PointStruct(
                     id=_point_id(slug, chunk["chunk_type"]),
                     vector=embed_text(chunk["text"]),
-                    payload={
-                        **_base_payload(scheme, slug),
-                        "chunk_type": chunk["chunk_type"],
-                        "text": chunk["text"],
-                    },
+                    payload=_chunk_payload(scheme, slug, chunk),
                 )
             )
         for start in range(0, len(points), UPSERT_BATCH):
@@ -243,11 +255,7 @@ def main() -> int:
                 PointStruct(
                     id=_point_id(slug, chunk["chunk_type"]),
                     vector=embed_text(chunk["text"]),
-                    payload={
-                        **_base_payload(scheme, slug),
-                        "chunk_type": chunk["chunk_type"],
-                        "text": chunk["text"],
-                    },
+                    payload=_chunk_payload(scheme, slug, chunk),
                 )
             )
 
